@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link } from 'expo-router';
+import { Link, router } from 'expo-router';
+import { useEffect, useState } from 'react';
 import {
   Image,
   Pressable,
@@ -9,10 +9,61 @@ import {
   View,
 } from 'react-native';
 
-import { checkBackendHealth } from '../services/api';
+import {
+  ApiError,
+  checkBackendHealth,
+  getCurrentUser,
+  getMyPreferences,
+  getMyProfile,
+} from '../services/api';
+import { clearAuthToken, getAuthToken } from '../services/auth';
 
 export default function HomeScreen() {
   const [status, setStatus] = useState('Backend not checked');
+  const [userEmail, setUserEmail] = useState('');
+
+  useEffect(() => {
+    const restoreSession = async () => {
+      const token = await getAuthToken();
+
+      if (!token) {
+        router.replace('/login');
+        return;
+      }
+
+      try {
+        const user = await getCurrentUser(token);
+        setUserEmail(user.email);
+
+        try {
+          await getMyProfile(token);
+        } catch (profileError) {
+          if (profileError instanceof ApiError && profileError.status === 404) {
+            router.replace('/profile-setup');
+            return;
+          }
+
+          throw profileError;
+        }
+
+        try {
+          await getMyPreferences(token);
+        } catch (preferencesError) {
+          if (preferencesError instanceof ApiError && preferencesError.status === 404) {
+            router.replace('/preferences');
+            return;
+          }
+
+          throw preferencesError;
+        }
+      } catch {
+        await clearAuthToken();
+        router.replace('/login');
+      }
+    };
+
+    restoreSession();
+  }, []);
 
   const handleGetStarted = async () => {
     try {
@@ -25,6 +76,11 @@ export default function HomeScreen() {
     }
   };
 
+  const handleLogout = async () => {
+    await clearAuthToken();
+    router.replace('/login');
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.scrollContent}>
       <View style={styles.container}>
@@ -32,9 +88,12 @@ export default function HomeScreen() {
 
         <View style={styles.headerRow}>
           <Text style={styles.badge}>Bloom</Text>
-          <Pressable style={styles.iconButton}>
-            <Text style={styles.iconButtonText}>♡</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            {userEmail ? <Text style={styles.userLabel}>{userEmail}</Text> : null}
+            <Pressable style={styles.iconButton} onPress={handleLogout}>
+              <Text style={styles.iconButtonText}>↩</Text>
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.heroCard}>
@@ -109,11 +168,22 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 24,
   },
+  headerActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
   badge: {
     fontSize: 18,
     fontWeight: '700',
     color: '#7A1F4A',
     letterSpacing: 1.2,
+  },
+  userLabel: {
+    color: '#6E4C60',
+    fontSize: 12,
+    fontWeight: '700',
+    maxWidth: 140,
   },
   iconButton: {
     width: 42,

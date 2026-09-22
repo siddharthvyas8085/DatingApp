@@ -1,5 +1,5 @@
-import { Link } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { Link, router } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -10,6 +10,15 @@ import {
   TextInput,
   View,
 } from 'react-native';
+
+import {
+  ApiError,
+  getCurrentUser,
+  getMyPreferences,
+  getMyProfile,
+  loginUser,
+} from '@/services/api';
+import { clearAuthToken, getAuthToken, saveAuthToken } from '@/services/auth';
 
 type FieldErrors = {
   email?: string;
@@ -23,6 +32,26 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [message, setMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const restoreSession = async () => {
+      const token = await getAuthToken();
+
+      if (!token) {
+        return;
+      }
+
+      try {
+        await getCurrentUser(token);
+        router.replace('/');
+      } catch {
+        await clearAuthToken();
+      }
+    };
+
+    restoreSession();
+  }, []);
 
   const canSubmit = useMemo(
     () => email.length > 0 && password.length > 0,
@@ -46,14 +75,62 @@ export default function LoginScreen() {
     return Object.keys(nextErrors).length === 0;
   };
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     setMessage('');
 
     if (!validate()) {
       return;
     }
 
-    setMessage('Login details look good. API integration is not connected yet.');
+    setIsSubmitting(true);
+
+    try {
+      const result = await loginUser({
+        email: email.trim(),
+        password,
+      });
+
+      await saveAuthToken(result.access_token);
+      await getCurrentUser(result.access_token);
+
+      try {
+        await getMyProfile(result.access_token);
+      } catch (profileError) {
+        if (profileError instanceof ApiError && profileError.status === 404) {
+          router.replace('/profile-setup');
+          return;
+        }
+
+        throw profileError;
+      }
+
+      try {
+        await getMyPreferences(result.access_token);
+        router.replace('/');
+        return;
+      } catch (preferencesError) {
+        if (preferencesError instanceof ApiError && preferencesError.status === 404) {
+          router.replace('/preferences');
+          return;
+        }
+
+        throw preferencesError;
+      }
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 401) {
+          setMessage('Invalid email or password. Please try again.');
+        } else if (error.status === 422 || error.status === 400) {
+          setMessage(error.message);
+        } else {
+          setMessage(error.message || 'Unable to log in right now. Please try again.');
+        }
+      } else {
+        setMessage('Unable to reach the backend. Please check that the server is running.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -109,10 +186,12 @@ export default function LoginScreen() {
 
             <Pressable
               accessibilityRole="button"
-              disabled={!canSubmit}
+              disabled={!canSubmit || isSubmitting}
               onPress={handleLogin}
-              style={[styles.loginButton, !canSubmit ? styles.disabledButton : null]}>
-              <Text style={styles.loginButtonText}>Log in</Text>
+              style={[styles.loginButton, !canSubmit || isSubmitting ? styles.disabledButton : null]}>
+              <Text style={styles.loginButtonText}>
+                {isSubmitting ? 'Logging in...' : 'Log in'}
+              </Text>
             </Pressable>
 
             <View style={styles.registerRow}>

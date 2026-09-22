@@ -1,5 +1,5 @@
-import { Link } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { Link, router } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -10,6 +10,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
+
+import { ApiError, getCurrentUser, registerUser } from '@/services/api';
+import { clearAuthToken, getAuthToken } from '@/services/auth';
 
 type FieldErrors = {
   email?: string;
@@ -25,6 +28,26 @@ export default function RegisterScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [message, setMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const restoreSession = async () => {
+      const token = await getAuthToken();
+
+      if (!token) {
+        return;
+      }
+
+      try {
+        await getCurrentUser(token);
+        router.replace('/');
+      } catch {
+        await clearAuthToken();
+      }
+    };
+
+    restoreSession();
+  }, []);
 
   const canSubmit = useMemo(
     () => email.length > 0 && password.length > 0 && confirmPassword.length > 0,
@@ -56,14 +79,38 @@ export default function RegisterScreen() {
     return Object.keys(nextErrors).length === 0;
   };
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     setMessage('');
 
     if (!validate()) {
       return;
     }
 
-    setMessage('Registration details look good. API integration is not connected yet.');
+    setIsSubmitting(true);
+
+    try {
+      const result = await registerUser({
+        email: email.trim(),
+        password,
+      });
+
+      setMessage(result.message || 'Registration successful. You can log in now.');
+      setPassword('');
+      setConfirmPassword('');
+      setErrors({});
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 409) {
+          setMessage('An account with this email already exists. Please log in instead.');
+        } else {
+          setMessage(error.message);
+        }
+      } else {
+        setMessage('Unable to reach the backend. Please check that the server is running.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -137,10 +184,12 @@ export default function RegisterScreen() {
 
             <Pressable
               accessibilityRole="button"
-              disabled={!canSubmit}
+              disabled={!canSubmit || isSubmitting}
               onPress={handleRegister}
-              style={[styles.registerButton, !canSubmit ? styles.disabledButton : null]}>
-              <Text style={styles.registerButtonText}>Register</Text>
+              style={[styles.registerButton, !canSubmit || isSubmitting ? styles.disabledButton : null]}>
+              <Text style={styles.registerButtonText}>
+                {isSubmitting ? 'Registering...' : 'Register'}
+              </Text>
             </Pressable>
 
             <View style={styles.loginRow}>
